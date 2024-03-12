@@ -5,4 +5,4 @@ all:
 	cargo build --release
 
 docker:
-	docker build -t molguin92/testapi:latest -f Dockerfile .
+	docker build -t molguin/testapi:latest -f Dockerfile .

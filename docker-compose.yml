@@ -1,5 +1,5 @@
 services:
   api:
-    image: molguin92/testapi:latest
+    image: molguin/testapi:latest
     ports:
       - 3080:80/tcp
