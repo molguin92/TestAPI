@@ -111,15 +111,30 @@ impl API {
         Ok(api_task)
     }
 
+    pub async fn clear_invalid_tasks(self: &Arc<API>) -> () {
+        log::info!("cleaning up invalid tasks...");
+        self.tasks.write().await.retain(|_, task| {
+            // only retain tasks with valid tokens
+            match self
+                .key
+                .verify_token::<NoCustomClaims>(task.task.token.as_ref(), None)
+            {
+                Ok(_) => true,
+                Err(_) => false,
+            }
+        });
+    }
+
     pub async fn validate_result<S: AsRef<str>>(
         self: &Arc<API>,
         task_id: S,
         token: S,
         result: i8,
     ) -> Result<(), ApiError> {
-        let _ = self.key
+        let _ = self
+            .key
             .verify_token::<NoCustomClaims>(token.as_ref(), None)
-            .map_err(|e| ApiError::AuthError)?;
+            .map_err(|_| ApiError::AuthError)?;
 
         match self.tasks.read().await.get(task_id.as_ref()) {
             None => Err(ApiError::NoSuchTask),

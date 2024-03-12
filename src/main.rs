@@ -7,13 +7,14 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, middleware, Router};
+use axum::{middleware, Json, Router};
 use clap::Parser;
 use log::LevelFilter;
 use reqwest::Url;
 use serde_derive::{Deserialize, Serialize};
 use simple_logger::SimpleLogger;
 use tokio::time::Instant;
+use tower_http::services::ServeFile;
 
 use test_api::{APITask, ApiError, API};
 
@@ -44,7 +45,7 @@ async fn request_logger(
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Address to bind to and serve from
-    #[arg(short = 'b', long, default_value_t = Url::parse("http://0.0.0.0:8080/api").unwrap())]
+    #[arg(short = 'b', long, default_value_t = Url::parse("http://0.0.0.0:8080").unwrap())]
     bind_addr: Url,
 }
 
@@ -61,6 +62,8 @@ async fn main() {
         args.bind_addr.port_or_known_default().unwrap()
     );
 
+    log::info!("Listening on {bind_host}...");
+
     let sock_addr = match tokio::net::lookup_host(bind_host).await {
         Ok(mut s) => match s.next() {
             Some(s) => s,
@@ -74,6 +77,7 @@ async fn main() {
     let api = API::new();
 
     let app = Router::new()
+        .route_service("/api", ServeFile::new("./instructions.html"))
         .route("/api/tasks", get(get_task_handler))
         .route("/api/tasks/:task_id", post(post_task_handler))
         .layer(middleware::from_fn(request_logger))
@@ -91,11 +95,15 @@ async fn main() {
 async fn get_task_handler(
     State(api): State<Arc<API>>,
 ) -> Result<(StatusCode, Json<APITask>), (StatusCode, impl IntoResponse)> {
+    api.clear_invalid_tasks().await;
     api.new_task()
         .await
         .map(|t| (StatusCode::OK, Json(t.clone())))
         .map_err(|e| match e {
-            ApiError::APIError(s) => (StatusCode::INTERNAL_SERVER_ERROR, ()),
+            ApiError::APIError(s) => {
+                log::error!("{}", s);
+                (StatusCode::INTERNAL_SERVER_ERROR, ())
+            }
             ApiError::NoSuchTask => unreachable!(),
             ApiError::IncorrectResult(_) => unreachable!(),
             ApiError::AuthError => (StatusCode::UNAUTHORIZED, ()),
@@ -120,6 +128,7 @@ async fn post_task_handler(
     headers: HeaderMap,
     Json(payload): Json<ReqBody>,
 ) -> Result<(StatusCode, Json<ResultBody>), (StatusCode, Json<ResultBody>)> {
+    api.clear_invalid_tasks().await;
     let bearer_token: String = match headers.get(header::AUTHORIZATION) {
         None => {
             return Err((
@@ -135,6 +144,7 @@ async fn post_task_handler(
         Some(h) => h
             .to_str()
             .map_err(|e| {
+                log::error!("{}", e);
                 (
                     StatusCode::FORBIDDEN,
                     Json(ResultBody {
@@ -207,7 +217,7 @@ async fn post_task_handler(
                 }),
             ),
             ApiError::IncorrectResult(expected) => (
-                StatusCode::UNAUTHORIZED,
+                StatusCode::OK,
                 Json(ResultBody {
                     success: false,
                     error: Some("incorrect result".to_string()),
