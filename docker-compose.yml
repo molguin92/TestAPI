@@ -1,8 +1,5 @@
 services:
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: molguin92/testapi:latest
     ports:
       - 3080:80/tcp
